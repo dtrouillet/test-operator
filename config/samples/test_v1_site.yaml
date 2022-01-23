@@ -1,0 +1,6 @@
+apiVersion: test.faya.fr/v1
+kind: Site
+metadata:
+  name: site-sample
+spec:
+  # TODO(user): Add fields here
