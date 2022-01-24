@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	testv1 "github.com/dtrouillet/site-operator/api/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -66,22 +67,33 @@ func (r *SiteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	podFound := &corev1.Pod{}
-	err = r.Client.Get(ctx, types.NamespacedName{Name: site.Name, Namespace: site.Namespace}, podFound)
+	deploymentFound := &appsv1.Deployment{}
+	err = r.Client.Get(ctx, types.NamespacedName{Name: site.Name, Namespace: site.Namespace}, deploymentFound)
 	if err != nil && errors.IsNotFound(err) {
-		mylog.Info("Pod is not found, so we create it")
+		mylog.Info("Deployment is not found, so we create it")
 		//create pod
-		pod := r.createPodSite(site)
-		err := r.Client.Create(ctx, pod)
+		deployment := r.createDeploymentSite(site)
+		err := r.Client.Create(ctx, deployment)
 		if err != nil {
-			mylog.Error(err, "Failed to create new Pod", "Pod.Namespace", pod.Namespace, "Pod.Name", pod.Name)
+			mylog.Error(err, "Failed to create new Pod", "Deployment.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
 			return ctrl.Result{}, err
 		}
 		// Deployment created successfully - return and requeue
 		return ctrl.Result{Requeue: true}, nil
 	} else if err != nil {
-		mylog.Error(err, "Failed to get Pod")
+		mylog.Error(err, "Failed to get Deployment")
 		return ctrl.Result{}, err
+	}
+
+	if deploymentFound.Spec.Replicas != &site.Spec.Replicas {
+		deploymentFound.Spec.Replicas = &site.Spec.Replicas
+		err = r.Client.Update(ctx, deploymentFound)
+		if err != nil {
+			mylog.Error(err, "Failed to update Deployment", "Deployment.Namespace", deploymentFound.Namespace, "Deployment.Name", deploymentFound.Name)
+			return ctrl.Result{}, err
+		}
+		// Spec updated - return and requeue
+		return ctrl.Result{Requeue: true}, nil
 	}
 	return ctrl.Result{}, nil
 }
@@ -93,22 +105,35 @@ func (r *SiteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *SiteReconciler) createPodSite(site *testv1.Site) *corev1.Pod {
+func (r *SiteReconciler) createDeploymentSite(site *testv1.Site) *appsv1.Deployment {
 	labels := map[string]string{"app": "site-test"}
 	image := "nginx"
-	pod := &corev1.Pod{
+	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      site.Name,
 			Namespace: site.Namespace,
 			Labels:    labels,
 		},
-		Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{
-				Image: image,
-				Name:  site.Name,
-			}},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &site.Spec.Replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: labels,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      site.Name,
+					Namespace: site.Namespace,
+					Labels:    labels,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{{
+						Image: image,
+						Name:  site.Name,
+					}},
+				},
+			},
 		},
 	}
-	_ = ctrl.SetControllerReference(site, pod, r.Scheme)
-	return pod
+	_ = ctrl.SetControllerReference(site, deployment, r.Scheme)
+	return deployment
 }

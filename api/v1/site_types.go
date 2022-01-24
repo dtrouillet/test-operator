@@ -30,6 +30,8 @@ type SiteSpec struct {
 
 	// Git repository to get static files
 	Git SiteSpecGit `json:"git,omitempty"`
+	// Number of replicas
+	Replicas int32 `json:"replicas"`
 }
 
 type SiteSpecGit struct {

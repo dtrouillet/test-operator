@@ -48,6 +48,12 @@ spec:
                   user:
                     type: string
                 type: object
+              replicas:
+                description: Number of replicas
+                format: int32
+                type: integer
+            required:
+            - replicas
             type: object
           status:
             description: SiteStatus defines the observed state of Site
