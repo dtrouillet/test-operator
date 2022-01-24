@@ -21,10 +21,12 @@ import (
 	testv1 "github.com/dtrouillet/site-operator/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -75,7 +77,7 @@ func (r *SiteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		deployment := r.createDeploymentSite(site)
 		err := r.Client.Create(ctx, deployment)
 		if err != nil {
-			mylog.Error(err, "Failed to create new Pod", "Deployment.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
+			mylog.Error(err, "Failed to create new Deployment", "Deployment.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
 			return ctrl.Result{}, err
 		}
 		// Deployment created successfully - return and requeue
@@ -85,8 +87,15 @@ func (r *SiteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	if deploymentFound.Spec.Replicas != &site.Spec.Replicas {
+	updated := false
+	if *deploymentFound.Spec.Replicas != site.Spec.Replicas {
 		deploymentFound.Spec.Replicas = &site.Spec.Replicas
+		updated = true
+	}
+
+	//deploymentFound.Annotations.
+
+	if updated {
 		err = r.Client.Update(ctx, deploymentFound)
 		if err != nil {
 			mylog.Error(err, "Failed to update Deployment", "Deployment.Namespace", deploymentFound.Namespace, "Deployment.Name", deploymentFound.Name)
@@ -95,6 +104,41 @@ func (r *SiteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		// Spec updated - return and requeue
 		return ctrl.Result{Requeue: true}, nil
 	}
+
+	serviceFound := &corev1.Service{}
+	err = r.Client.Get(ctx, types.NamespacedName{Name: site.Name, Namespace: site.Namespace}, serviceFound)
+	if err != nil && errors.IsNotFound(err) {
+		mylog.Info("Service is not found, so we create it")
+		service := r.createServiceSite(site)
+		err := r.Client.Create(ctx, service)
+		if err != nil {
+			mylog.Error(err, "Failed to create new Service", "Service.Namespace", service.Namespace, "Service.Name", service.Name)
+			return ctrl.Result{}, err
+		}
+		// Deployment created successfully - return and requeue
+		return ctrl.Result{Requeue: true}, nil
+	} else if err != nil {
+		mylog.Error(err, "Failed to get Service")
+		return ctrl.Result{}, err
+	}
+
+	ingressFound := &networkingv1.Ingress{}
+	err = r.Client.Get(ctx, types.NamespacedName{Name: site.Name, Namespace: site.Namespace}, ingressFound)
+	if err != nil && errors.IsNotFound(err) {
+		mylog.Info("Ingress is not found, so we create it")
+		ingress := r.createIngressSite(site)
+		err := r.Client.Create(ctx, ingress)
+		if err != nil {
+			mylog.Error(err, "Failed to create new Ingress", "Ingress.Namespace", ingress.Namespace, "Ingress.Name", ingress.Name)
+			return ctrl.Result{}, err
+		}
+		// Deployment created successfully - return and requeue
+		return ctrl.Result{Requeue: true}, nil
+	} else if err != nil {
+		mylog.Error(err, "Failed to get createIngressSite")
+		return ctrl.Result{}, err
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -102,7 +146,67 @@ func (r *SiteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 func (r *SiteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&testv1.Site{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
+		Owns(&networkingv1.Ingress{}).
 		Complete(r)
+}
+
+func (r *SiteReconciler) createIngressSite(site *testv1.Site) *networkingv1.Ingress {
+	public := "public"
+	prefix := networkingv1.PathType("Prefix")
+	labels := map[string]string{"app": "site-test"}
+	ingress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      site.Name,
+			Namespace: site.Namespace,
+			Labels:    labels,
+		},
+		Spec: networkingv1.IngressSpec{
+			IngressClassName: &public,
+			Rules: []networkingv1.IngressRule{{
+				Host: site.Spec.Url,
+				IngressRuleValue: networkingv1.IngressRuleValue{
+					HTTP: &networkingv1.HTTPIngressRuleValue{
+						Paths: []networkingv1.HTTPIngressPath{{
+							Path:     "/",
+							PathType: &prefix,
+							Backend: networkingv1.IngressBackend{
+								Service: &networkingv1.IngressServiceBackend{
+									Name: site.Name,
+									Port: networkingv1.ServiceBackendPort{Name: "http"},
+								},
+							},
+						}},
+					},
+				},
+			}},
+		},
+	}
+	_ = ctrl.SetControllerReference(site, ingress, r.Scheme)
+	return ingress
+}
+
+func (r *SiteReconciler) createServiceSite(site *testv1.Site) *corev1.Service {
+	labels := map[string]string{"app": "site-test"}
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      site.Name,
+			Namespace: site.Namespace,
+			Labels:    labels,
+		},
+		Spec: corev1.ServiceSpec{
+			Type:     "ClusterIP",
+			Selector: labels,
+			Ports: []corev1.ServicePort{{
+				Name:       "http",
+				Port:       80,
+				TargetPort: intstr.IntOrString{IntVal: 80},
+			}},
+		},
+	}
+	_ = ctrl.SetControllerReference(site, service, r.Scheme)
+	return service
 }
 
 func (r *SiteReconciler) createDeploymentSite(site *testv1.Site) *appsv1.Deployment {
@@ -126,9 +230,29 @@ func (r *SiteReconciler) createDeploymentSite(site *testv1.Site) *appsv1.Deploym
 					Labels:    labels,
 				},
 				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{{
+						Image: "alpine/git",
+						Args:  []string{"clone", "--branch", site.Spec.Git.Branch, site.Spec.Git.Url, "/data"},
+						Name:  "git-init",
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "data",
+							MountPath: "/data",
+						}},
+					}},
 					Containers: []corev1.Container{{
 						Image: image,
 						Name:  site.Name,
+						Ports: []corev1.ContainerPort{{
+							Name:          "http",
+							ContainerPort: 80,
+						}},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "data",
+							MountPath: "/usr/share/nginx/html",
+						}},
+					}},
+					Volumes: []corev1.Volume{{
+						Name: "data",
 					}},
 				},
 			},
