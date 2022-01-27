@@ -40,10 +40,12 @@ spec:
                 description: Git repository to get static files
                 properties:
                   branch:
+                    description: Branch to deploy
                     type: string
                   password:
                     type: string
                   url:
+                    description: Url's git repo
                     type: string
                   user:
                     type: string
@@ -53,6 +55,7 @@ spec:
                 format: int32
                 type: integer
               url:
+                description: host url to get the site
                 type: string
             required:
             - replicas
