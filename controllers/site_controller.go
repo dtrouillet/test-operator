@@ -88,8 +88,21 @@ func (r *SiteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	updated := false
+	recreate := false
 	if *deploymentFound.Spec.Replicas != site.Spec.Replicas {
 		deploymentFound.Spec.Replicas = &site.Spec.Replicas
+		updated = true
+	}
+
+	if deploymentFound.Spec.Template.Spec.InitContainers[0].Args[2] != site.Spec.Git.Branch {
+		deploymentFound.Spec.Template.Spec.InitContainers[0].Args[2] = site.Spec.Git.Branch
+		recreate = true
+		updated = true
+	}
+
+	if deploymentFound.Spec.Template.Spec.InitContainers[0].Args[3] != site.Spec.Git.Url {
+		deploymentFound.Spec.Template.Spec.InitContainers[0].Args[3] = site.Spec.Git.Url
+		recreate = true
 		updated = true
 	}
 
@@ -103,6 +116,20 @@ func (r *SiteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		}
 		// Spec updated - return and requeue
 		return ctrl.Result{Requeue: true}, nil
+	}
+
+	if recreate {
+		pod := &corev1.Pod{}
+		opts := []client.DeleteAllOfOption{
+			client.InNamespace(site.Namespace),
+			client.MatchingLabels{"app": site.Name},
+			client.GracePeriodSeconds(5),
+		}
+		err := r.DeleteAllOf(ctx, pod, opts...)
+		if err != nil {
+			mylog.Error(err, "Failed to delete Pod from Deployment", "Deployment.Namespace", deploymentFound.Namespace, "Deployment.Name", deploymentFound.Name)
+			return ctrl.Result{}, err
+		}
 	}
 
 	serviceFound := &corev1.Service{}
@@ -155,7 +182,7 @@ func (r *SiteReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func (r *SiteReconciler) createIngressSite(site *testv1.Site) *networkingv1.Ingress {
 	public := "public"
 	prefix := networkingv1.PathType("Prefix")
-	labels := map[string]string{"app": "site-test"}
+	labels := map[string]string{"app": site.Name}
 	ingress := &networkingv1.Ingress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      site.Name,
@@ -188,7 +215,7 @@ func (r *SiteReconciler) createIngressSite(site *testv1.Site) *networkingv1.Ingr
 }
 
 func (r *SiteReconciler) createServiceSite(site *testv1.Site) *corev1.Service {
-	labels := map[string]string{"app": "site-test"}
+	labels := map[string]string{"app": site.Name}
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      site.Name,
@@ -210,7 +237,7 @@ func (r *SiteReconciler) createServiceSite(site *testv1.Site) *corev1.Service {
 }
 
 func (r *SiteReconciler) createDeploymentSite(site *testv1.Site) *appsv1.Deployment {
-	labels := map[string]string{"app": "site-test"}
+	labels := map[string]string{"app": site.Name}
 	image := "nginx"
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
