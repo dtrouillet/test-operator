@@ -31,12 +31,15 @@ type SiteSpec struct {
 	// Git repository to get static files
 	Git SiteSpecGit `json:"git,omitempty"`
 	// Number of replicas
-	Replicas int32  `json:"replicas"`
-	Url      string `json:"url"`
+	Replicas int32 `json:"replicas"`
+	//host url to get the site
+	Url string `json:"url"`
 }
 
 type SiteSpecGit struct {
-	Url      string `json:"url,omitempty"`
+	//Url's git repo
+	Url string `json:"url,omitempty"`
+	//Branch to deploy
 	Branch   string `json:"branch,omitempty"`
 	User     string `json:"user,omitempty"`
 	Password string `json:"password,omitempty"`
