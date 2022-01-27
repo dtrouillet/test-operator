@@ -166,6 +166,16 @@ func (r *SiteReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
+	if ingressFound.Spec.Rules[0].Host != site.Spec.Url {
+		ingressFound.Spec.Rules[0].Host = site.Spec.Url
+		err = r.Client.Update(ctx, ingressFound)
+		if err != nil {
+			mylog.Error(err, "Failed to update Ingress", "Ingress.Namespace", ingressFound.Namespace, "Ingress.Name", ingressFound.Name)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
+	}
+
 	return ctrl.Result{}, nil
 }
 
